@@ -1,0 +1,18 @@
+# data (personal)
+sales_inventory_tool.json
+*.backup_*
+
+# python
+__pycache__/
+*.pyc
+.venv/
+env/
+venv/
+
+# mac / windows
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
