@@ -1,5 +1,7 @@
 # app.py
 import os
+import sys
+from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -9,7 +11,21 @@ from ui.sales_tabs import SalesTabs
 from ui.settings_tabs import SettingsTabs
 
 APP_TITLE = "在庫・売上管理ツール"
-DATA_FILE = os.path.join(os.path.dirname(__file__), "sales_inventory_tool.json")
+
+def get_data_file_path(filename: str = "sales_inventory_tool.json") -> str:
+    """
+    保存先を決定する。
+    - exe化（PyInstaller）: exe と同じフォルダ
+    - 通常実行: app.py と同じフォルダ
+    """
+    if getattr(sys, "frozen", False):
+        base_dir = Path(sys.executable).resolve().parent
+    else:
+        base_dir = Path(__file__).resolve().parent
+    return str(base_dir / filename)
+
+DATA_FILE = get_data_file_path()
+
 
 
 def apply_theme(style: ttk.Style, theme_name: str) -> None:
