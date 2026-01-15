@@ -19,7 +19,9 @@
 
 ## 1. 準備するもの（Windows）
 
-### 1.1 Python をインストールする
+### 1.1 Python をインストールする（初回のみ）
+
+このリポジトリから `.bat` で実行ファイル（`.exe`）を作るために Python が必要です。
 
 1. Windows の検索で **Microsoft Store** を開く
 2. **Python 3.11**（または 3.10 以上）をインストール
@@ -30,10 +32,11 @@
 2. 次を入力して Enter
 
 ```powershell
-py --version
+python --version
 ```
 
-`Python 3.xx.x` と表示されればOKです。
+`Python 3.xx.x` と表示されればOKです。  
+（`py --version` が使える環境ならそれでも問題ありません）
 
 ---
 
@@ -43,35 +46,44 @@ py --version
 2. **Code** → **Download ZIP** をクリック
 3. ダウンロードした ZIP を右クリックして **すべて展開**
 
-展開したフォルダ（例: `inventory_sales_tool`）を開きます。
+展開したフォルダ（例: `inventory-sales-tool-main`）を開きます。
 
 ---
 
-## 3. アプリを起動する
+## 3. `.bat` で起動用 exe とショートカットを作る（推奨）
 
-### 3.1 PowerShell を開く
+この手順を実行すると、次が自動で行われます。
+
+- 仮想環境（`.venv`）の作成と依存関係インストール
+- PyInstaller による `.exe` 作成
+- 配布用フォルダ `_dist\inventory-sales-tool\` の作成
+- `sales_inventory_tool.json` の配置（無ければ空で生成）
+- デスクトップにショートカット（`.lnk`）を作成（作業フォルダを固定）
+
+### 3.1 PowerShell（またはコマンドプロンプト）を開く
 
 1. 展開したフォルダを開く
 2. フォルダの空白部分で **Shift + 右クリック**
-3. **PowerShell ウィンドウをここで開く** を選ぶ
+3. **ターミナルをここで開く**（または PowerShell / コマンドプロンプト）を選ぶ
 
 ---
 
-### 3.2 グラフ用ライブラリを入れる（最初の1回だけ）
+### 3.2 ビルド＆ショートカット作成
+
+次を実行します。
 
 ```powershell
-py -m pip install matplotlib
+.\build_and_shortcut.bat
 ```
+
+完了すると、デスクトップに `inventory-sales-tool` のショートカットが作られます。
 
 ---
 
 ### 3.3 アプリを起動する
 
-```powershell
-py app.py
-```
-
-画面が表示されたら起動成功です。
+デスクトップに作られたショートカットから起動します。  
+このショートカットは「作業フォルダ（Start in）」が固定されているため、データファイルの場所で迷いません。
 
 ---
 
@@ -130,8 +142,8 @@ py app.py
 
 ## 5. データの保存場所
 
-* アプリのフォルダに `sales_inventory_tool.json` が自動で作られます
-* アプリを閉じてもデータは消えません
+- データは配布フォルダ `_dist\inventory-sales-tool\` 内の `sales_inventory_tool.json` に保存されます
+- アプリを閉じてもデータは消えません
 
 GitHub にアップする場合は、このファイルは含めないでください。
 
@@ -141,26 +153,45 @@ GitHub にアップする場合は、このファイルは含めないでくだ�
 sales_inventory_tool.json
 __pycache__/
 .venv/
+build/
+dist/
+_dist/
 ```
 
 ---
 
 ## 6. よくあるトラブル
 
-### Python が見つからない
+### 6.1 Python が見つからない
 
-Python がインストールされていません。
+Python がインストールされていない、または PATH が通っていません。  
 「1.1 Python をインストールする」をやり直してください。
+
+確認例:
+
+```powershell
+python --version
+```
 
 ---
 
-### 画面が出ない / すぐ閉じる
+### 6.2 `.bat` 実行で止まる
 
-PowerShell で次を実行し、表示されるエラーを確認してください。
+エラー内容がすぐ消える場合は、次の手順で実行してください。
+
+1. フォルダの空白で **Shift + 右クリック** → ターミナルを開く
+2. 次を実行
 
 ```powershell
-py app.py
+.\build_and_shortcut.bat
 ```
+
+---
+
+### 6.3 画面が出ない / すぐ閉じる
+
+まずはデスクトップのショートカットから起動してください。  
+それでも解決しない場合、`_dist\inventory-sales-tool\` の中の exe を「ターミナルから」起動してエラーを確認してください。
 
 ---
 
