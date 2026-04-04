@@ -1,4 +1,5 @@
 # models.py
+"""商品・顧客の論理モデル（参考用）。実行時の永続化は store の dict が正です。"""
 from dataclasses import dataclass
 
 

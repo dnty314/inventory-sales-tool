@@ -25,6 +25,17 @@ def safe_int(s: str, default: int = 0) -> int:
         return default
 
 
+def parse_int_optional(s: str) -> Optional[int]:
+    """空・不正なら None。検証用に safe_int(..., None) より型が明確。"""
+    try:
+        t = str(s).strip()
+        if t == "":
+            return None
+        return int(t)
+    except Exception:
+        return None
+
+
 def safe_float(s: str, default: float = 0.0) -> float:
     try:
         return float(str(s).strip())

@@ -2,6 +2,12 @@
 sales_inventory_tool.json
 *.backup_*
 
+# build artifacts
+build/
+dist/
+_dist/
+/*.exe
+
 # python
 __pycache__/
 *.pyc

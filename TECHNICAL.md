@@ -2,13 +2,29 @@
 
 ## 1. 概要
 
-本リポジトリは、Python + Tkinter による **在庫管理・売上管理 GUI アプリケーション**である。
+本リポジトリは、Python による **在庫管理・売上管理**ツールである。
 
-* DB は使用せず、**JSON ファイル**で永続化
+* **デスクトップ版**: Tkinter GUI（`app.py`）
+* **ブラウザ版**: FastAPI + 静的 UI（`web/`、`python -m web`）
+* DB は使用せず、**JSON ファイル**で永続化（`paths.get_data_file_path()` でパス統一）
 * 個人利用・小規模業務を想定
 * Windows / macOS / Linux で動作（Python 3.10 以上）
 
+Windows 向けに **`setup.bat`（仮想環境・依存関係）** と **`run.bat`（起動メニュー）** の 2 本だけを同梱（利用手順は `README.md`）。
+
 本ドキュメントは **技術者・開発者向け**に、設計方針・構成・拡張方法を説明する。
+
+### Windows: 配布用 .exe のビルド（任意）
+
+`README.md` の手順 A 向け。リポジトリ直下で **`setup.bat`** を済ませたあと、同じフォルダでコマンドプロンプトを開き:
+
+```bat
+.venv\Scripts\activate.bat
+python -m pip install -U pyinstaller
+pyinstaller --noconfirm --clean --name inventory-sales-tool --noconsole --onefile app.py
+```
+
+生成物は `dist\inventory-sales-tool.exe`。配布用に `_dist\inventory-sales-tool\` のようなフォルダへコピーし、**`sales_inventory_tool.json`** を同じフォルダに置く（無ければ空の `{}` でよい）と、`paths.py` の exe 実行時のデータパスと整合します。デスクトップ用 `.lnk` は手作りするか、`create_shortcut.ps1` 等で作成してください。
 
 ---
 
@@ -16,16 +32,27 @@
 
 ```
 inventory-sales-tool/
-├─ app.py                  # エントリーポイント
-├─ store.py                # データ管理・永続化（JSON）
-├─ models.py               # データモデル定義
-├─ utils.py                # 共通ユーティリティ
+├─ app.py                     # デスクトップ版エントリ
+├─ paths.py                   # データ JSON パス（exe / 通常実行）
+├─ store.py                   # データ管理・永続化（JSON）
+├─ models.py
+├─ utils.py
+├─ requirements.txt
+├─ setup.bat                  # Windows: venv + pip（初回）
+├─ run.bat                    # Windows: 起動メニュー（デスクトップ / Web / ショートカット）
 ├─ sales_inventory_tool.json  # 実行時データ（※Git管理外）
-└─ ui/
-   ├─ inventory_tabs.py    # 在庫関連 UI
-   ├─ sales_tabs.py        # 売上・顧客 UI
-   ├─ settings_tabs.py     # 設定 UI
-   └─ common.py            # UI 共通部品
+├─ web/                       # ブラウザ版（FastAPI）
+│  ├─ server.py
+│  ├─ deps.py
+│  ├─ __main__.py
+│  └─ static/index.html
+└─ ui/                        # Tkinter UI
+   ├─ inventory_tabs.py
+   ├─ sales_tabs.py
+   ├─ settings_tabs.py
+   ├─ theme.py
+   ├─ scrollframe.py
+   └─ common.py
 ```
 
 設計上の原則:

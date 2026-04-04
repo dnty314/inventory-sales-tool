@@ -2,38 +2,41 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 
 import matplotlib
+
 matplotlib.use("TkAgg")
 from matplotlib import rcParams
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
-from utils import safe_int, parse_date_yyyy_mm_dd
+from utils import safe_int, parse_int_optional, parse_date_yyyy_mm_dd
 from ui.common import (
     CategoryItemSelector,
     confirm_soft_delete,
     confirm_dangerous_delete,
     pick_color,
     apply_category_row_tags,
+    register_rich_treeview,
+    tree_row_tags,
 )
+from ui.theme import rich_ui_active
+from ui.scrollframe import VerticalScrollFrame
 
 rcParams["font.family"] = "sans-serif"
-rcParams["font.sans-serif"] = ["Yu Gothic", "Meiryo", "MS Gothic", "Noto Sans CJK JP", "DejaVu Sans"]
+rcParams["font.sans-serif"] = [
+    "Hiragino Sans",
+    "Hiragino Maru Gothic ProN",
+    "Yu Gothic",
+    "Meiryo",
+    "MS Gothic",
+    "Noto Sans CJK JP",
+    "DejaVu Sans",
+]
 rcParams["axes.unicode_minus"] = False
-
-
-def calc_inventory_total(store) -> int:
-    """在庫総額（無効商品は除外）"""
-    total = 0
-    for it in store.data.get("items", {}).values():
-        if it.get("disabled", False):
-            continue
-        total += int(it.get("stock", 0) or 0) * int(it.get("unit_price", 0) or 0)
-    return int(total)
 
 
 class InventoryTabs(ttk.Frame):
@@ -41,24 +44,25 @@ class InventoryTabs(ttk.Frame):
         super().__init__(parent)
         self.store = store
 
-        # --- Prominent total bar ---
-        style = ttk.Style()
-        try:
-            style.configure("InvTotalCaption.TLabel", font=("", 12, "bold"))
-            style.configure("InvTotalValue.TLabel", font=("", 18, "bold"))
-        except Exception:
-            pass
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
 
-        total_bar = ttk.LabelFrame(self, text="在庫 総額")
-        total_bar.pack(fill="x", padx=8, pady=(8, 6))
+        hero = ttk.LabelFrame(self, text="在庫サマリー", style="Card.TLabelframe")
+        hero.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
 
         self.var_inventory_total = tk.StringVar(value="")
-        ttk.Label(total_bar, text="合計", style="InvTotalCaption.TLabel").pack(side="left", padx=(10, 8), pady=6)
-        ttk.Label(total_bar, textvariable=self.var_inventory_total, style="InvTotalValue.TLabel").pack(side="left", padx=(0, 12), pady=6)
-        ttk.Button(total_bar, text="更新", command=self.refresh_all).pack(side="right", padx=10, pady=6)
+        row = ttk.Frame(hero)
+        row.pack(fill="x", padx=4, pady=6)
+        ttk.Label(row, text="在庫評価額（有効商品のみ）", style="HeroCaption.TLabel").pack(side="left", padx=(4, 8))
+        ttk.Label(row, textvariable=self.var_inventory_total, style="HeroValue.TLabel").pack(side="left")
+        ttk.Button(row, text="一覧を更新", command=self.refresh_all, style="Toolbar.TButton").pack(side="right", padx=6)
 
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True)
+        vscroll = VerticalScrollFrame(self)
+        vscroll.grid(row=1, column=0, sticky="nsew")
+
+        nb = ttk.Notebook(vscroll.body)
+        _np = (10, 10) if rich_ui_active() else (6, 6)
+        nb.pack(fill="x", expand=False, padx=_np[0], pady=_np[1])
 
         self.tab_master = ItemMasterFrame(nb, store, tabs=self)
         self.tab_single = SingleMovementFrame(nb, store, tabs=self)
@@ -67,21 +71,38 @@ class InventoryTabs(ttk.Frame):
         self.tab_graph = InventoryGraphFrame(nb, store)
 
         nb.add(self.tab_master, text="商品マスタ")
-        nb.add(self.tab_single, text="単発（IN/OUT/ADJUST）")
-        nb.add(self.tab_batch, text="一括（IN/OUT）")
-        nb.add(self.tab_hist, text="在庫履歴（一覧）")
-        nb.add(self.tab_graph, text="在庫履歴（グラフ）")
+        nb.add(self.tab_single, text="単発入出庫")
+        nb.add(self.tab_batch, text="一括入出庫")
+        nb.add(self.tab_hist, text="在庫履歴")
+        nb.add(self.tab_graph, text="在庫グラフ")
 
         self.nb = nb
-        self.refresh_all()
+        self._body_scroll = vscroll
+        nb.bind("<<NotebookTabChanged>>", self._on_inner_notebook_tab)
 
-    def refresh_all(self):
+        # matplotlib の plot は重いので起動直後は遅延。タブ表示を先に描画する。
+        self.refresh_all(defer_graph=True)
+
+    def _on_inner_notebook_tab(self, _event=None) -> None:
+        """先に Tk の再描画を進め、スクロール領域とグラフは少し後で更新（真っ白な間を短くする）。"""
+        self.update_idletasks()
+        self.after(1, self._body_scroll.update_scrollregion)
+        try:
+            current = self.nb.nametowidget(self.nb.select())
+        except tk.TclError:
+            return
+        if current is self.tab_graph:
+            self.after(2, self.tab_graph.refresh)
+
+    def refresh_all(self, *, defer_graph: bool = False) -> None:
         self.tab_master.refresh()
         self.tab_single.refresh()
         self.tab_batch.refresh()
         self.tab_hist.refresh()
-        self.tab_graph.refresh()
-        self.var_inventory_total.set(self.store.money_str(calc_inventory_total(self.store)))
+        if not defer_graph:
+            self.tab_graph.refresh()
+        self.var_inventory_total.set(self.store.money_str(self.store.calc_inventory_total()))
+        self.after(1, self._body_scroll.update_scrollregion)
 
 
 class ItemMasterFrame(ttk.Frame):
@@ -90,8 +111,8 @@ class ItemMasterFrame(ttk.Frame):
         self.store = store
         self.tabs = tabs
 
-        frm = ttk.LabelFrame(self, text="商品マスタ登録/更新")
-        frm.pack(fill="x", padx=8, pady=8)
+        frm = ttk.LabelFrame(self, text="商品の登録・更新", style="Card.TLabelframe")
+        frm.pack(fill="x", padx=10, pady=10)
 
         self.var_sku = tk.StringVar()
         self.var_name = tk.StringVar()
@@ -99,61 +120,71 @@ class ItemMasterFrame(ttk.Frame):
         self.var_cat = tk.StringVar()
         self.var_stock = tk.StringVar()
 
-        ttk.Label(frm, text="SKU").grid(row=0, column=0, sticky="w", padx=4, pady=2)
-        ttk.Entry(frm, textvariable=self.var_sku, width=20).grid(row=0, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(frm, text="SKU").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        ttk.Entry(frm, textvariable=self.var_sku, width=22).grid(row=0, column=1, sticky="w", padx=4, pady=4)
 
-        ttk.Label(frm, text="商品名").grid(row=0, column=2, sticky="w", padx=4, pady=2)
-        ttk.Entry(frm, textvariable=self.var_name, width=30).grid(row=0, column=3, sticky="w", padx=4, pady=2)
+        ttk.Label(frm, text="商品名").grid(row=0, column=2, sticky="w", padx=4, pady=4)
+        ttk.Entry(frm, textvariable=self.var_name, width=34).grid(row=0, column=3, sticky="w", padx=4, pady=4)
 
-        ttk.Label(frm, text="単価").grid(row=1, column=0, sticky="w", padx=4, pady=2)
-        ttk.Entry(frm, textvariable=self.var_price, width=20).grid(row=1, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(frm, text="単価（円）").grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        ttk.Entry(frm, textvariable=self.var_price, width=22).grid(row=1, column=1, sticky="w", padx=4, pady=4)
 
-        ttk.Label(frm, text="カテゴリ（候補＋手入力）").grid(row=1, column=2, sticky="w", padx=4, pady=2)
-        self.cb_cat = ttk.Combobox(frm, textvariable=self.var_cat, width=30, state="normal")
-        self.cb_cat.grid(row=1, column=3, sticky="w", padx=4, pady=2)
+        ttk.Label(frm, text="カテゴリ").grid(row=1, column=2, sticky="w", padx=4, pady=4)
+        self.cb_cat = ttk.Combobox(frm, textvariable=self.var_cat, width=32, state="normal")
+        self.cb_cat.grid(row=1, column=3, sticky="w", padx=4, pady=4)
 
-        ttk.Label(frm, text="在庫（初期/上書き）").grid(row=2, column=0, sticky="w", padx=4, pady=2)
-        ttk.Entry(frm, textvariable=self.var_stock, width=20).grid(row=2, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(frm, text="在庫数量").grid(row=2, column=0, sticky="w", padx=4, pady=4)
+        ttk.Entry(frm, textvariable=self.var_stock, width=22).grid(row=2, column=1, sticky="w", padx=4, pady=4)
+        ttk.Label(frm, text="※マスタ上の在庫を直接上書きします（履歴は増えません）", foreground="#666").grid(
+            row=2, column=2, columnspan=2, sticky="w", padx=4, pady=4
+        )
 
         btns = ttk.Frame(frm)
-        btns.grid(row=2, column=3, sticky="e", padx=4, pady=2)
-        ttk.Button(btns, text="追加/更新", command=self.on_upsert).pack(side="left", padx=4)
-        ttk.Button(btns, text="入力リセット", command=self.on_reset).pack(side="left", padx=4)
+        btns.grid(row=3, column=0, columnspan=4, sticky="e", padx=4, pady=8)
+        ttk.Button(btns, text="保存", command=self.on_upsert, style="Accent.TButton").pack(side="left", padx=4)
+        ttk.Button(btns, text="入力クリア", command=self.on_reset, style="Toolbar.TButton").pack(side="left", padx=4)
 
-        table = ttk.LabelFrame(self, text="商品一覧（選択して操作）")
-        table.pack(fill="both", expand=True, padx=8, pady=8)
+        table = ttk.LabelFrame(self, text="商品一覧", style="Card.TLabelframe")
+        table.pack(fill="x", expand=False, padx=10, pady=(0, 10))
 
         self.var_show_disabled = tk.BooleanVar(value=False)
-        ttk.Checkbutton(table, text="無効商品も表示", variable=self.var_show_disabled, command=self.refresh).pack(anchor="w", padx=4, pady=2)
+        ttk.Checkbutton(table, text="無効（アーカイブ）した商品も表示", variable=self.var_show_disabled, command=self.refresh).pack(
+            anchor="w", padx=6, pady=4
+        )
 
         cols = ("sku", "name", "category", "unit_price", "stock", "disabled")
+        headings = {
+            "sku": "SKU",
+            "name": "商品名",
+            "category": "カテゴリ",
+            "unit_price": "単価",
+            "stock": "在庫",
+            "disabled": "無効",
+        }
         self.tree = ttk.Treeview(table, columns=cols, show="headings", height=14)
-        for c, w in [("sku", 120), ("name", 240), ("category", 160), ("unit_price", 120), ("stock", 80), ("disabled", 80)]:
-            self.tree.heading(c, text=c)
+        for c, w in [("sku", 120), ("name", 240), ("category", 160), ("unit_price", 110), ("stock", 72), ("disabled", 56)]:
+            self.tree.heading(c, text=headings[c])
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=4, pady=4)
+        self.tree.pack(fill="x", expand=False, padx=6, pady=4)
         self.tree.bind("<<TreeviewSelect>>", self.on_select_row)
+        register_rich_treeview(self.tree)
 
         ops = ttk.Frame(table)
-        ops.pack(fill="x", padx=4, pady=4)
-
-        ttk.Button(ops, text="無効化（削除）", command=self.on_disable).pack(side="left", padx=4)
-        ttk.Button(ops, text="復活（有効化）", command=self.on_enable).pack(side="left", padx=4)
-        ttk.Button(ops, text="完全削除（確認語入力）", command=self.on_hard_delete).pack(side="left", padx=4)
+        ops.pack(fill="x", padx=6, pady=6)
+        ttk.Button(ops, text="無効化", command=self.on_disable, style="Toolbar.TButton").pack(side="left", padx=4)
+        ttk.Button(ops, text="有効化", command=self.on_enable, style="Toolbar.TButton").pack(side="left", padx=4)
+        ttk.Button(ops, text="完全削除…", command=self.on_hard_delete, style="Toolbar.TButton").pack(side="left", padx=4)
+        self.var_force_orphan = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            ops,
+            text="履歴に参照があっても強制削除（非推奨）",
+            variable=self.var_force_orphan,
+        ).pack(side="left", padx=12)
 
         self.refresh()
 
     def _category_values(self) -> List[str]:
-        cats = set()
-        for it in self.store.data.get("items", {}).values():
-            c = (it.get("category") or "").strip()
-            if c:
-                cats.add(c)
-        for c in (self.store.data.get("category_colors", {}) or {}).keys():
-            c = (c or "").strip()
-            if c:
-                cats.add(c)
-        return sorted(cats)
+        return self.store.list_master_categories()
 
     def _selected_sku(self) -> Optional[str]:
         sel = self.tree.selection()
@@ -176,9 +207,9 @@ class ItemMasterFrame(ttk.Frame):
     def on_upsert(self):
         sku = self.var_sku.get().strip()
         name = self.var_name.get().strip()
-        price = safe_int(self.var_price.get(), None)
+        price = parse_int_optional(self.var_price.get())
         cat = self.var_cat.get().strip()
-        stock = safe_int(self.var_stock.get(), 0)
+        stock = parse_int_optional(self.var_stock.get())
 
         if not sku:
             messagebox.showwarning("入力", "SKUを入力してください", parent=self)
@@ -198,7 +229,7 @@ class ItemMasterFrame(ttk.Frame):
 
         try:
             self.store.upsert_item(sku, name, int(price), cat, int(stock))
-            messagebox.showinfo("成功", "商品を追加/更新しました", parent=self)
+            messagebox.showinfo("成功", "商品を保存しました", parent=self)
             if self.tabs is not None:
                 self.tabs.refresh_all()
             else:
@@ -216,7 +247,7 @@ class ItemMasterFrame(ttk.Frame):
     def on_disable(self):
         sku = self._selected_sku()
         if not sku:
-            messagebox.showwarning("操作", "商品を選択してください", parent=self)
+            messagebox.showwarning("操作", "一覧から商品を選択してください", parent=self)
             return
         try:
             self.store.disable_item(sku)
@@ -230,7 +261,7 @@ class ItemMasterFrame(ttk.Frame):
     def on_enable(self):
         sku = self._selected_sku()
         if not sku:
-            messagebox.showwarning("操作", "商品を選択してください", parent=self)
+            messagebox.showwarning("操作", "一覧から商品を選択してください", parent=self)
             return
         try:
             self.store.enable_item(sku)
@@ -244,13 +275,13 @@ class ItemMasterFrame(ttk.Frame):
     def on_hard_delete(self):
         sku = self._selected_sku()
         if not sku:
-            messagebox.showwarning("操作", "商品を選択してください", parent=self)
+            messagebox.showwarning("操作", "一覧から商品を選択してください", parent=self)
             return
         phrase = self.store.get_setting("danger_confirm_phrase", "DELETE")
-        if not confirm_dangerous_delete(self, phrase=phrase, title="商品 完全削除"):
+        if not confirm_dangerous_delete(self, phrase=phrase, title="商品の完全削除"):
             return
         try:
-            self.store.hard_delete_item(sku)
+            self.store.hard_delete_item(sku, allow_orphan=self.var_force_orphan.get())
             if self.tabs is not None:
                 self.tabs.refresh_all()
             else:
@@ -263,17 +294,24 @@ class ItemMasterFrame(ttk.Frame):
 
         self.tree.delete(*self.tree.get_children())
         show_disabled = self.var_show_disabled.get()
+        idx = 0
         for sku, it in sorted(self.store.data.get("items", {}).items(), key=lambda x: x[0]):
             if (not show_disabled) and it.get("disabled", False):
                 continue
-            self.tree.insert("", "end", values=(
-                sku,
-                it.get("name", ""),
-                it.get("category", ""),
-                self.store.money_str(it.get("unit_price", 0)),
-                it.get("stock", 0),
-                "YES" if it.get("disabled", False) else "",
-            ))
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    sku,
+                    it.get("name", ""),
+                    it.get("category", ""),
+                    self.store.money_str(it.get("unit_price", 0)),
+                    it.get("stock", 0),
+                    "はい" if it.get("disabled", False) else "",
+                ),
+                tags=tree_row_tags(idx),
+            )
+            idx += 1
 
 
 class SingleMovementFrame(ttk.Frame):
@@ -282,46 +320,50 @@ class SingleMovementFrame(ttk.Frame):
         self.store = store
         self.tabs = tabs
 
-        box = ttk.LabelFrame(self, text="単発 入出庫 / 在庫調整")
-        box.pack(fill="x", padx=8, pady=8)
+        box = ttk.LabelFrame(self, text="入庫・出庫・在庫調整", style="Card.TLabelframe")
+        box.pack(fill="x", padx=10, pady=10)
 
         self.var_action = tk.StringVar(value="IN")
         self.var_qty = tk.StringVar(value="1")
         self.var_note = tk.StringVar(value="")
 
-        ttk.Label(box, text="操作").grid(row=0, column=0, sticky="w", padx=4, pady=2)
-        ttk.Combobox(box, textvariable=self.var_action, values=["IN", "OUT", "ADJUST"], state="readonly", width=10)\
-            .grid(row=0, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(box, text="操作").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        ttk.Combobox(
+            box,
+            textvariable=self.var_action,
+            values=["IN", "OUT", "ADJUST"],
+            state="readonly",
+            width=12,
+        ).grid(row=0, column=1, sticky="w", padx=4, pady=4)
 
-        ttk.Label(box, text="数量").grid(row=0, column=2, sticky="w", padx=4, pady=2)
-        ttk.Combobox(box, textvariable=self.var_qty, values=[str(i) for i in range(0, 1001)], state="readonly", width=10)\
-            .grid(row=0, column=3, sticky="w", padx=4, pady=2)
+        ttk.Label(box, text="数量").grid(row=0, column=2, sticky="w", padx=4, pady=4)
+        ttk.Combobox(box, textvariable=self.var_qty, values=[str(i) for i in range(0, 1001)], state="readonly", width=10).grid(
+            row=0, column=3, sticky="w", padx=4, pady=4
+        )
 
-        ttk.Label(box, text="メモ").grid(row=0, column=4, sticky="w", padx=4, pady=2)
-        ttk.Entry(box, textvariable=self.var_note, width=30).grid(row=0, column=5, sticky="w", padx=4, pady=2)
+        ttk.Label(box, text="メモ").grid(row=0, column=4, sticky="w", padx=4, pady=4)
+        ttk.Entry(box, textvariable=self.var_note, width=28).grid(row=0, column=5, sticky="w", padx=4, pady=4)
 
-        self.selector = CategoryItemSelector(box, store)
-        self.selector.grid(row=1, column=0, columnspan=6, sticky="w", padx=4, pady=2)
+        self.selector = CategoryItemSelector(box, store, on_change=self._update_preview)
+        self.selector.grid(row=1, column=0, columnspan=6, sticky="w", padx=4, pady=6)
 
-        # --- simulation (pre-check) ---
-        sim = ttk.LabelFrame(self, text="シミュレーション（実行前）")
-        sim.pack(fill="x", padx=8, pady=(0, 8))
+        for v in (self.var_action, self.var_qty, self.var_note):
+            v.trace_add("write", lambda *_: self._update_preview())
+
+        sim = ttk.LabelFrame(self, text="実行前プレビュー", style="Card.TLabelframe")
+        sim.pack(fill="x", padx=10, pady=(0, 8))
 
         self.var_sim_amount = tk.StringVar(value="")
         self.var_sim_total_after = tk.StringVar(value="")
-        ttk.Label(sim, text="明細金額（予測）:").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Label(sim, textvariable=self.var_sim_amount, font=("", 11, "bold")).grid(row=0, column=1, sticky="w", padx=6, pady=4)
-        ttk.Label(sim, text="在庫総額（更新後 予測）:").grid(row=0, column=2, sticky="w", padx=20, pady=4)
-        ttk.Label(sim, textvariable=self.var_sim_total_after, font=("", 11, "bold")).grid(row=0, column=3, sticky="w", padx=6, pady=4)
+        ttk.Label(sim, text="この操作の評価額変化").grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        ttk.Label(sim, textvariable=self.var_sim_amount, style="HeroValue.TLabel").grid(row=0, column=1, sticky="w", padx=8, pady=6)
+        ttk.Label(sim, text="実行後の在庫評価額").grid(row=0, column=2, sticky="w", padx=16, pady=6)
+        ttk.Label(sim, textvariable=self.var_sim_total_after, style="HeroValue.TLabel").grid(row=0, column=3, sticky="w", padx=8, pady=6)
 
         btns = ttk.Frame(self)
-        btns.pack(fill="x", padx=8, pady=(0, 8))
-        ttk.Button(btns, text="実行", command=self.on_apply).pack(side="right", padx=4)
-        ttk.Button(btns, text="入力リセット", command=self.on_reset).pack(side="right", padx=4)
-
-        # poll to reflect selector changes (CategoryItemSelector may not expose variables)
-        self._preview_last_key = None
-        self.after(200, self._preview_tick)
+        btns.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(btns, text="反映", command=self.on_apply, style="Accent.TButton").pack(side="right", padx=6)
+        ttk.Button(btns, text="リセット", command=self.on_reset, style="Toolbar.TButton").pack(side="right", padx=6)
 
         self.refresh()
 
@@ -335,7 +377,7 @@ class SingleMovementFrame(ttk.Frame):
     def _compute_preview(self) -> Optional[Tuple[int, int]]:
         sku = self.selector.get_selected_sku()
         action = self.var_action.get().strip().upper()
-        qty = safe_int(self.var_qty.get(), None)
+        qty = parse_int_optional(self.var_qty.get())
         if not sku or qty is None:
             return None
 
@@ -345,7 +387,7 @@ class SingleMovementFrame(ttk.Frame):
 
         unit = int(it.get("unit_price", 0) or 0)
         stock_before = int(it.get("stock", 0) or 0)
-        current_total = calc_inventory_total(self.store)
+        current_total = self.store.calc_inventory_total()
 
         if action == "IN":
             amount = int(qty) * unit
@@ -362,19 +404,12 @@ class SingleMovementFrame(ttk.Frame):
     def _update_preview(self):
         res = self._compute_preview()
         if res is None:
-            self.var_sim_amount.set("")
-            self.var_sim_total_after.set("")
+            self.var_sim_amount.set("—")
+            self.var_sim_total_after.set("—")
         else:
             amount, total_after = res
             self.var_sim_amount.set(self.store.money_str(amount))
             self.var_sim_total_after.set(self.store.money_str(total_after))
-
-    def _preview_tick(self):
-        key = (self.selector.get_selected_sku(), self.var_action.get(), self.var_qty.get())
-        if key != self._preview_last_key:
-            self._preview_last_key = key
-            self._update_preview()
-        self.after(200, self._preview_tick)
 
     def on_apply(self):
         sku = self.selector.get_selected_sku()
@@ -387,18 +422,18 @@ class SingleMovementFrame(ttk.Frame):
         note = self.var_note.get()
 
         try:
-            # preview for message
             preview = self._compute_preview()
-
             self.store.apply_movement(action, sku, int(qty), note)
-
-            # after
-            total_after = calc_inventory_total(self.store)
+            total_after = self.store.calc_inventory_total()
             if preview is not None:
                 amount, _ = preview
-                msg = f"在庫を更新しました。\n\n明細金額: {self.store.money_str(amount)}\n在庫総額（更新後）: {self.store.money_str(total_after)}"
+                msg = (
+                    f"在庫を更新しました。\n\n"
+                    f"評価額の変化: {self.store.money_str(amount)}\n"
+                    f"在庫評価額（更新後）: {self.store.money_str(total_after)}"
+                )
             else:
-                msg = f"在庫を更新しました。\n\n在庫総額（更新後）: {self.store.money_str(total_after)}"
+                msg = f"在庫を更新しました。\n\n在庫評価額（更新後）: {self.store.money_str(total_after)}"
 
             messagebox.showinfo("成功", msg, parent=self)
 
@@ -421,53 +456,62 @@ class BatchMovementFrame(ttk.Frame):
         self.tabs = tabs
         self.lines: List[Dict[str, Any]] = []
 
-        top = ttk.LabelFrame(self, text="一括 入出庫（IN / OUT）")
-        top.pack(fill="x", padx=8, pady=8)
+        top = ttk.LabelFrame(self, text="一括で入庫または出庫", style="Card.TLabelframe")
+        top.pack(fill="x", padx=10, pady=10)
 
         self.var_action = tk.StringVar(value="IN")
         self.var_qty = tk.StringVar(value="1")
         self.var_note = tk.StringVar(value="")
 
-        ttk.Label(top, text="操作").grid(row=0, column=0, sticky="w", padx=4, pady=2)
-        ttk.Combobox(top, textvariable=self.var_action, values=["IN", "OUT"], state="readonly", width=10)\
-            .grid(row=0, column=1, sticky="w", padx=4, pady=2)
+        ttk.Label(top, text="操作").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        ttk.Combobox(top, textvariable=self.var_action, values=["IN", "OUT"], state="readonly", width=12).grid(
+            row=0, column=1, sticky="w", padx=4, pady=4
+        )
 
-        ttk.Label(top, text="数量").grid(row=0, column=2, sticky="w", padx=4, pady=2)
-        ttk.Combobox(top, textvariable=self.var_qty, values=[str(i) for i in range(0, 1001)], state="readonly", width=10)\
-            .grid(row=0, column=3, sticky="w", padx=4, pady=2)
+        ttk.Label(top, text="数量").grid(row=0, column=2, sticky="w", padx=4, pady=4)
+        ttk.Combobox(top, textvariable=self.var_qty, values=[str(i) for i in range(0, 1001)], state="readonly", width=10).grid(
+            row=0, column=3, sticky="w", padx=4, pady=4
+        )
 
-        ttk.Label(top, text="メモ").grid(row=0, column=4, sticky="w", padx=4, pady=2)
-        ttk.Entry(top, textvariable=self.var_note, width=30).grid(row=0, column=5, sticky="w", padx=4, pady=2)
+        ttk.Label(top, text="メモ").grid(row=0, column=4, sticky="w", padx=4, pady=4)
+        ttk.Entry(top, textvariable=self.var_note, width=26).grid(row=0, column=5, sticky="w", padx=4, pady=4)
 
-        self.selector = CategoryItemSelector(top, store)
-        self.selector.grid(row=1, column=0, columnspan=8, sticky="w", padx=4, pady=2)
+        self.selector = CategoryItemSelector(top, store, on_change=self._update_batch_preview)
+        self.selector.grid(row=1, column=0, columnspan=8, sticky="w", padx=4, pady=6)
 
-        ttk.Button(top, text="明細に追加", command=self.on_add_line).grid(row=0, column=6, sticky="w", padx=8, pady=2)
-        ttk.Button(top, text="明細をクリア", command=self.on_clear_lines).grid(row=0, column=7, sticky="w", padx=4, pady=2)
+        ttk.Button(top, text="明細に追加", command=self.on_add_line, style="Toolbar.TButton").grid(
+            row=0, column=6, sticky="w", padx=8, pady=4
+        )
+        ttk.Button(top, text="明細クリア", command=self.on_clear_lines, style="Toolbar.TButton").grid(
+            row=0, column=7, sticky="w", padx=4, pady=4
+        )
 
-        # simulation
-        sim = ttk.LabelFrame(self, text="シミュレーション（実行前）")
-        sim.pack(fill="x", padx=8, pady=(0, 8))
+        self.var_action.trace_add("write", lambda *_: self._update_batch_preview())
+
+        sim = ttk.LabelFrame(self, text="プレビュー", style="Card.TLabelframe")
+        sim.pack(fill="x", padx=10, pady=(0, 8))
         self.var_batch_amount = tk.StringVar(value="")
         self.var_batch_total_after = tk.StringVar(value="")
-        ttk.Label(sim, text="明細合計（予測）:").grid(row=0, column=0, sticky="w", padx=6, pady=4)
-        ttk.Label(sim, textvariable=self.var_batch_amount, font=("", 11, "bold")).grid(row=0, column=1, sticky="w", padx=6, pady=4)
-        ttk.Label(sim, text="在庫総額（更新後 予測）:").grid(row=0, column=2, sticky="w", padx=20, pady=4)
-        ttk.Label(sim, textvariable=self.var_batch_total_after, font=("", 11, "bold")).grid(row=0, column=3, sticky="w", padx=6, pady=4)
+        ttk.Label(sim, text="明細の評価額合計").grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        ttk.Label(sim, textvariable=self.var_batch_amount, style="HeroValue.TLabel").grid(row=0, column=1, sticky="w", padx=8, pady=6)
+        ttk.Label(sim, text="反映後の在庫評価額").grid(row=0, column=2, sticky="w", padx=16, pady=6)
+        ttk.Label(sim, textvariable=self.var_batch_total_after, style="HeroValue.TLabel").grid(row=0, column=3, sticky="w", padx=8, pady=6)
 
-        mid = ttk.LabelFrame(self, text="一括明細")
-        mid.pack(fill="both", expand=True, padx=8, pady=8)
+        mid = ttk.LabelFrame(self, text="明細リスト", style="Card.TLabelframe")
+        mid.pack(fill="x", expand=False, padx=10, pady=(0, 8))
 
         cols = ("sku", "name", "qty", "note")
+        heads = {"sku": "SKU", "name": "商品名", "qty": "数量", "note": "メモ"}
         self.tree = ttk.Treeview(mid, columns=cols, show="headings", height=10)
-        for c, w, t in [("sku", 140, "SKU"), ("name", 260, "商品名"), ("qty", 80, "数量"), ("note", 360, "メモ")]:
-            self.tree.heading(c, text=t)
+        for c, w in [("sku", 140), ("name", 260), ("qty", 72), ("note", 320)]:
+            self.tree.heading(c, text=heads[c])
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=4, pady=4)
+        self.tree.pack(fill="x", expand=False, padx=6, pady=6)
+        register_rich_treeview(self.tree)
 
         bot = ttk.Frame(self)
-        bot.pack(fill="x", padx=8, pady=8)
-        ttk.Button(bot, text="一括反映", command=self.on_apply_batch).pack(side="right", padx=4)
+        bot.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(bot, text="一括で反映", command=self.on_apply_batch, style="Accent.TButton").pack(side="right", padx=6)
 
         self.refresh()
         self._update_batch_preview()
@@ -488,7 +532,7 @@ class BatchMovementFrame(ttk.Frame):
 
     def _update_batch_preview(self):
         amount = self._batch_amount_sum()
-        total_after = calc_inventory_total(self.store) + amount
+        total_after = self.store.calc_inventory_total() + amount
         self.var_batch_amount.set(self.store.money_str(amount))
         self.var_batch_total_after.set(self.store.money_str(total_after))
 
@@ -498,14 +542,20 @@ class BatchMovementFrame(ttk.Frame):
             messagebox.showwarning("操作", "商品を選択してください", parent=self)
             return
         qty = safe_int(self.var_qty.get(), -1)
-        if qty is None or qty < 0:
+        if qty < 0:
             messagebox.showwarning("入力", "数量が不正です", parent=self)
             return
         note = self.var_note.get().strip()
 
         it = self.store.get_item(sku)
+        row_i = len(self.lines)
         self.lines.append({"sku": sku, "qty": int(qty), "note": note})
-        self.tree.insert("", "end", values=(sku, it.get("name", ""), int(qty), note))
+        self.tree.insert(
+            "",
+            "end",
+            values=(sku, it.get("name", ""), int(qty), note),
+            tags=tree_row_tags(row_i),
+        )
 
         self.var_qty.set("1")
         self.var_note.set("")
@@ -525,9 +575,12 @@ class BatchMovementFrame(ttk.Frame):
         try:
             amount = self._batch_amount_sum()
             self.store.apply_batch_movement(action, self.lines)
-
-            total_after = calc_inventory_total(self.store)
-            msg = f"一括反映しました。\n\n明細合計: {self.store.money_str(amount)}\n在庫総額（更新後）: {self.store.money_str(total_after)}"
+            total_after = self.store.calc_inventory_total()
+            msg = (
+                f"一括反映しました。\n\n"
+                f"評価額の合計変化: {self.store.money_str(amount)}\n"
+                f"在庫評価額（更新後）: {self.store.money_str(total_after)}"
+            )
             messagebox.showinfo("成功", msg, parent=self)
 
             self.on_clear_lines()
@@ -549,49 +602,88 @@ class InventoryHistoryFrame(ttk.Frame):
         self.store = store
 
         top = ttk.Frame(self)
-        top.pack(fill="x", padx=8, pady=6)
+        top.pack(fill="x", padx=10, pady=8)
 
         default_include = bool(self.store.get_setting("show_deleted_by_default", False))
         self.var_include_deleted = tk.BooleanVar(value=default_include)
-        ttk.Checkbutton(top, text="削除済みも表示", variable=self.var_include_deleted, command=self.refresh).pack(side="left", padx=4)
+        ttk.Checkbutton(top, text="削除済み行も表示", variable=self.var_include_deleted, command=self.refresh).pack(side="left", padx=4)
 
-        ttk.Button(top, text="選択行を削除（ゴミ箱）", command=self.on_soft_delete).pack(side="left", padx=6)
-        ttk.Button(top, text="選択行を復元", command=self.on_restore).pack(side="left", padx=6)
-        ttk.Button(top, text="選択行を完全削除（確認語入力）", command=self.on_hard_delete).pack(side="left", padx=6)
-        ttk.Button(top, text="削除済みを完全消去（パージ）", command=self.on_purge).pack(side="left", padx=12)
+        ttk.Label(top, text="絞り込み").pack(side="left", padx=(16, 4))
+        self.var_filter = tk.StringVar(value="")
+        ent = ttk.Entry(top, textvariable=self.var_filter, width=28)
+        ent.pack(side="left", padx=4)
+        ent.bind("<KeyRelease>", lambda e: self.refresh())
+        ttk.Button(top, text="CSV出力", command=self.on_export_csv, style="Toolbar.TButton").pack(side="right", padx=6)
 
-        colorfrm = ttk.LabelFrame(self, text="カテゴリ色（履歴一覧の行背景色）")
-        colorfrm.pack(fill="x", padx=8, pady=6)
+        row2 = ttk.Frame(self)
+        row2.pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Button(row2, text="選択を論理削除", command=self.on_soft_delete, style="Toolbar.TButton").pack(side="left", padx=4)
+        ttk.Button(row2, text="選択を復元", command=self.on_restore, style="Toolbar.TButton").pack(side="left", padx=4)
+        ttk.Button(row2, text="選択を完全削除…", command=self.on_hard_delete, style="Toolbar.TButton").pack(side="left", padx=4)
+        ttk.Button(row2, text="削除済みをパージ…", command=self.on_purge, style="Toolbar.TButton").pack(side="left", padx=12)
+
+        colorfrm = ttk.LabelFrame(self, text="一覧の行色（カテゴリ別）", style="Card.TLabelframe")
+        colorfrm.pack(fill="x", padx=10, pady=6)
         self.var_color_cat = tk.StringVar(value="")
-        ttk.Label(colorfrm, text="カテゴリ").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(colorfrm, text="カテゴリ").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         self.cb_cat = ttk.Combobox(colorfrm, textvariable=self.var_color_cat, state="readonly", width=30)
-        self.cb_cat.grid(row=0, column=1, sticky="w", padx=4, pady=2)
-        ttk.Button(colorfrm, text="色を設定", command=self.on_set_color).grid(row=0, column=2, sticky="w", padx=6, pady=2)
+        self.cb_cat.grid(row=0, column=1, sticky="w", padx=6, pady=6)
+        ttk.Button(colorfrm, text="色を選択", command=self.on_set_color, style="Toolbar.TButton").grid(row=0, column=2, sticky="w", padx=8, pady=6)
 
         table = ttk.Frame(self)
-        table.pack(fill="both", expand=True, padx=8, pady=8)
+        table.pack(fill="x", expand=False, padx=10, pady=(0, 10))
 
         cols = (
-            "id", "ts", "action", "sku", "name", "category", "qty",
-            "unit_price", "amount", "inventory_total_after",
-            "stock_after", "note", "deleted"
+            "id",
+            "ts",
+            "action",
+            "sku",
+            "name",
+            "category",
+            "qty",
+            "unit_price",
+            "amount",
+            "inventory_total_after",
+            "stock_after",
+            "note",
+            "deleted",
         )
-        self.tree = ttk.Treeview(table, columns=cols, show="headings", height=18)
-
-        widths = {
-            "id": 120, "ts": 160, "action": 70, "sku": 120, "name": 220, "category": 140,
-            "qty": 60, "unit_price": 110, "amount": 120, "inventory_total_after": 150,
-            "stock_after": 90, "note": 220, "deleted": 70
+        headings = {
+            "id": "ID",
+            "ts": "日時",
+            "action": "操作",
+            "sku": "SKU",
+            "name": "商品名",
+            "category": "カテゴリ",
+            "qty": "数量",
+            "unit_price": "単価",
+            "amount": "金額",
+            "inventory_total_after": "在庫評価額(後)",
+            "stock_after": "在庫(後)",
+            "note": "メモ",
+            "deleted": "削除",
         }
-        label_map = {
-            "id": "ID", "ts": "日時", "action": "操作", "sku": "SKU", "name": "商品名", "category": "カテゴリ",
-            "qty": "数量", "unit_price": "単価", "amount": "金額", "inventory_total_after": "在庫総額(後)",
-            "stock_after": "在庫(後)", "note": "メモ", "deleted": "削除"
+        self.tree = ttk.Treeview(table, columns=cols, show="headings", height=16)
+        widths = {
+            "id": 120,
+            "ts": 150,
+            "action": 64,
+            "sku": 110,
+            "name": 200,
+            "category": 120,
+            "qty": 52,
+            "unit_price": 90,
+            "amount": 100,
+            "inventory_total_after": 120,
+            "stock_after": 72,
+            "note": 180,
+            "deleted": 52,
         }
         for c in cols:
-            self.tree.heading(c, text=label_map.get(c, c))
-            self.tree.column(c, width=widths.get(c, 120), anchor="w")
-        self.tree.pack(fill="both", expand=True)
+            self.tree.heading(c, text=headings[c])
+            self.tree.column(c, width=widths[c], anchor="w")
+        self.tree.pack(fill="x", expand=False)
+        register_rich_treeview(self.tree)
 
         self.refresh()
 
@@ -602,12 +694,27 @@ class InventoryHistoryFrame(ttk.Frame):
         vals = self.tree.item(sel[0], "values")
         return str(vals[0]) if vals else None
 
+    def on_export_csv(self):
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("すべて", "*.*")],
+            title="在庫履歴を保存",
+        )
+        if not path:
+            return
+        try:
+            n = self.store.export_inventory_history_csv(path, include_deleted=self.var_include_deleted.get())
+            messagebox.showinfo("CSV", f"{n} 件を出力しました。\n{path}", parent=self)
+        except Exception as e:
+            messagebox.showerror("エラー", str(e), parent=self)
+
     def on_soft_delete(self):
         rid = self._selected_id()
         if not rid:
-            messagebox.showwarning("操作", "履歴行を選択してください", parent=self)
+            messagebox.showwarning("操作", "行を選択してください", parent=self)
             return
-        ok, reason = confirm_soft_delete(self, "在庫履歴 削除")
+        ok, reason = confirm_soft_delete(self, "在庫履歴の削除")
         if not ok:
             return
         try:
@@ -619,7 +726,7 @@ class InventoryHistoryFrame(ttk.Frame):
     def on_restore(self):
         rid = self._selected_id()
         if not rid:
-            messagebox.showwarning("操作", "履歴行を選択してください", parent=self)
+            messagebox.showwarning("操作", "行を選択してください", parent=self)
             return
         try:
             self.store.restore_inventory_history(rid)
@@ -630,10 +737,10 @@ class InventoryHistoryFrame(ttk.Frame):
     def on_hard_delete(self):
         rid = self._selected_id()
         if not rid:
-            messagebox.showwarning("操作", "履歴行を選択してください", parent=self)
+            messagebox.showwarning("操作", "行を選択してください", parent=self)
             return
         phrase = self.store.get_setting("danger_confirm_phrase", "DELETE")
-        if not confirm_dangerous_delete(self, phrase=phrase, title="在庫履歴 完全削除"):
+        if not confirm_dangerous_delete(self, phrase=phrase, title="在庫履歴の完全削除"):
             return
         try:
             self.store.hard_delete_inventory_history(rid)
@@ -643,10 +750,11 @@ class InventoryHistoryFrame(ttk.Frame):
 
     def on_purge(self):
         phrase = self.store.get_setting("danger_confirm_phrase", "DELETE")
-        if not confirm_dangerous_delete(self, phrase=phrase, title="在庫履歴 パージ"):
+        if not confirm_dangerous_delete(self, phrase=phrase, title="削除済み履歴の消去"):
             return
         try:
-            self.store.purge_deleted_inventory_history()
+            n = self.store.purge_deleted_inventory_history()
+            messagebox.showinfo("完了", f"論理削除済み {n} 件を消去しました。", parent=self)
             self.refresh()
         except Exception as e:
             messagebox.showerror("エラー", str(e), parent=self)
@@ -654,7 +762,7 @@ class InventoryHistoryFrame(ttk.Frame):
     def on_set_color(self):
         cat = self.var_color_cat.get().strip()
         if not cat:
-            messagebox.showwarning("操作", "カテゴリを選択してください", parent=self)
+            messagebox.showwarning("操作", "カテゴリを選んでください", parent=self)
             return
         color = pick_color(self, initial=self.store.get_category_color(cat) or "#FFFFFF")
         if not color:
@@ -676,30 +784,55 @@ class InventoryHistoryFrame(ttk.Frame):
         include_deleted = self.var_include_deleted.get()
         rows = self.store.list_inventory_history(include_deleted=include_deleted)
 
+        q = (self.var_filter.get() or "").strip().lower()
+        if q:
+            filtered = []
+            for r in rows:
+                sku = r.get("sku", "")
+                it = self.store.data.get("items", {}).get(sku, {})
+                blob = " ".join(
+                    [
+                        str(r.get("id", "")),
+                        str(r.get("ts", "")),
+                        str(r.get("action", "")),
+                        sku,
+                        str(it.get("name", "")),
+                        str(it.get("category", "")),
+                        str(r.get("note", "")),
+                    ]
+                ).lower()
+                if q in blob:
+                    filtered.append(r)
+            rows = filtered
+
         apply_category_row_tags(self.tree, self.store)
 
-        for r in rows:
+        for i, r in enumerate(rows):
             sku = r.get("sku", "")
             it = self.store.data.get("items", {}).get(sku, {})
-            name = it.get("name", "(削除済み商品)")
+            name = it.get("name", "（参照なし）")
             cat = it.get("category", "")
-
             tag = f"cat::{cat}" if cat in (self.store.data.get("category_colors", {}) or {}) else ""
-            self.tree.insert("", "end", values=(
-                r.get("id", ""),
-                r.get("ts", ""),
-                r.get("action", ""),
-                sku,
-                name,
-                cat,
-                r.get("qty", 0),
-                self.store.money_str(r.get("unit_price", 0)),
-                self.store.money_str(r.get("amount", 0)),                 # store側が未対応でも0表示
-                self.store.money_str(r.get("inventory_total_after", 0)),  # store側が未対応でも0表示
-                r.get("stock_after", 0),
-                r.get("note", ""),
-                "YES" if r.get("deleted", False) else "",
-            ), tags=(tag,) if tag else ())
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    r.get("id", ""),
+                    r.get("ts", ""),
+                    r.get("action", ""),
+                    sku,
+                    name,
+                    cat,
+                    r.get("qty", 0),
+                    self.store.money_str(r.get("unit_price", 0)),
+                    self.store.money_str(r.get("amount", 0)),
+                    self.store.money_str(r.get("inventory_total_after", 0)),
+                    r.get("stock_after", 0),
+                    r.get("note", ""),
+                    "はい" if r.get("deleted", False) else "",
+                ),
+                tags=tree_row_tags(i, tag),
+            )
 
 
 class InventoryGraphFrame(ttk.Frame):
@@ -707,37 +840,41 @@ class InventoryGraphFrame(ttk.Frame):
         super().__init__(parent)
         self.store = store
 
-        top = ttk.LabelFrame(self, text="在庫推移グラフ")
-        top.pack(fill="x", padx=8, pady=6)
+        top = ttk.LabelFrame(self, text="条件", style="Card.TLabelframe")
+        top.pack(fill="x", padx=10, pady=10)
 
         self.var_cat = tk.StringVar(value="")
         self.var_sku = tk.StringVar(value="")
         self.var_from = tk.StringVar(value="")
         self.var_to = tk.StringVar(value="")
 
-        ttk.Label(top, text="カテゴリ").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        ttk.Label(top, text="カテゴリ").grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self.cb_cat = ttk.Combobox(top, textvariable=self.var_cat, state="readonly", width=28)
-        self.cb_cat.grid(row=0, column=1, sticky="w", padx=4, pady=2)
+        self.cb_cat.grid(row=0, column=1, sticky="w", padx=4, pady=4)
         self.cb_cat.bind("<<ComboboxSelected>>", lambda e: self._on_cat_changed())
 
-        ttk.Label(top, text="商品").grid(row=0, column=2, sticky="w", padx=4, pady=2)
+        ttk.Label(top, text="商品（SKU）").grid(row=0, column=2, sticky="w", padx=4, pady=4)
         self.cb_sku = ttk.Combobox(top, textvariable=self.var_sku, state="readonly", width=30)
-        self.cb_sku.grid(row=0, column=3, sticky="w", padx=4, pady=2)
+        self.cb_sku.grid(row=0, column=3, sticky="w", padx=4, pady=4)
 
-        ttk.Label(top, text="From (YYYY-MM-DD)").grid(row=1, column=0, sticky="w", padx=4, pady=2)
-        ttk.Entry(top, textvariable=self.var_from, width=16).grid(row=1, column=1, sticky="w", padx=4, pady=2)
-        ttk.Label(top, text="To (YYYY-MM-DD)").grid(row=1, column=2, sticky="w", padx=4, pady=2)
-        ttk.Entry(top, textvariable=self.var_to, width=16).grid(row=1, column=3, sticky="w", padx=4, pady=2)
+        ttk.Label(top, text="開始日").grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        ttk.Entry(top, textvariable=self.var_from, width=14).grid(row=1, column=1, sticky="w", padx=4, pady=4)
+        ttk.Label(top, text="終了日").grid(row=1, column=2, sticky="w", padx=4, pady=4)
+        ttk.Entry(top, textvariable=self.var_to, width=14).grid(row=1, column=3, sticky="w", padx=4, pady=4)
 
-        ttk.Button(top, text="表示", command=self.plot).grid(row=1, column=4, sticky="w", padx=6, pady=2)
-        ttk.Button(top, text="7日", command=lambda: self._preset_days(7)).grid(row=1, column=5, sticky="w", padx=4, pady=2)
-        ttk.Button(top, text="30日", command=lambda: self._preset_days(30)).grid(row=1, column=6, sticky="w", padx=4, pady=2)
-        ttk.Button(top, text="クリア", command=self._clear_range).grid(row=1, column=7, sticky="w", padx=4, pady=2)
+        ttk.Label(top, text="YYYY-MM-DD（空欄は全期間）", foreground="#666").grid(row=1, column=4, sticky="w", padx=8)
 
-        fig = Figure(figsize=(10, 5), dpi=100)
+        ttk.Button(top, text="再描画", command=self.plot, style="Accent.TButton").grid(row=0, column=4, sticky="w", padx=8, pady=4)
+        ttk.Button(top, text="直近7日", command=lambda: self._preset_days(7), style="Toolbar.TButton").grid(row=0, column=5, sticky="w", padx=4)
+        ttk.Button(top, text="直近30日", command=lambda: self._preset_days(30), style="Toolbar.TButton").grid(row=0, column=6, sticky="w", padx=4)
+        ttk.Button(top, text="期間クリア", command=self._clear_range, style="Toolbar.TButton").grid(row=0, column=7, sticky="w", padx=4)
+
+        fig = Figure(figsize=(9, 3.6), dpi=100)
         self.ax = fig.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(fig, master=self)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=8, pady=8)
+        tw = self.canvas.get_tk_widget()
+        tw.configure(height=340)
+        tw.pack(fill="x", expand=False, padx=10, pady=(0, 10))
         self.fig = fig
 
         self.refresh()
@@ -783,8 +920,17 @@ class InventoryGraphFrame(ttk.Frame):
             self.canvas.draw()
             return
 
-        start_dt = parse_date_yyyy_mm_dd(self.var_from.get().strip()) if self.var_from.get().strip() else None
-        end_dt = parse_date_yyyy_mm_dd(self.var_to.get().strip()) if self.var_to.get().strip() else None
+        start_d = None
+        end_d = None
+        try:
+            if self.var_from.get().strip():
+                start_d = parse_date_yyyy_mm_dd(self.var_from.get())
+            if self.var_to.get().strip():
+                end_d = parse_date_yyyy_mm_dd(self.var_to.get())
+        except Exception:
+            messagebox.showerror("入力エラー", "日付は YYYY-MM-DD で入力してください", parent=self)
+            self.canvas.draw()
+            return
 
         hist = self.store.list_inventory_history(include_deleted=False)
 
@@ -797,17 +943,26 @@ class InventoryGraphFrame(ttk.Frame):
                 dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
             except Exception:
                 continue
-            if start_dt and dt < start_dt:
+            day = dt.date()
+            if start_d and day < start_d:
                 continue
-            if end_dt and dt > end_dt:
+            if end_d and day > end_d:
                 continue
             xs.append(dt)
             ys.append(int(r.get("stock_after", 0) or 0))
 
-        it = self.store.get_item(sku)
-        self.ax.plot(xs, ys)
-        self.ax.set_title(f"在庫推移: {it.get('name','')} ({sku})")
+        try:
+            it = self.store.get_item(sku)
+            title_name = it.get("name", "")
+        except Exception:
+            title_name = "（削除済み参照）"
+
+        if not xs:
+            self.ax.set_title(f"{title_name}（{sku}）— 該当データなし")
+        else:
+            self.ax.plot(xs, ys, marker="o", markersize=3)
+            self.ax.set_title(f"在庫推移: {title_name}（{sku}）")
         self.ax.set_xlabel("日時")
-        self.ax.set_ylabel("在庫数")
+        self.ax.set_ylabel("在庫数量")
         self.fig.autofmt_xdate()
         self.canvas.draw()

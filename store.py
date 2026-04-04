@@ -1,6 +1,9 @@
 # store.py
 from __future__ import annotations
 
+import csv
+import os
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from utils import now_str, new_id, atomic_write_json, load_json_or_default, format_money
@@ -8,7 +11,8 @@ from utils import now_str, new_id, atomic_write_json, load_json_or_default, form
 
 def _default_settings() -> Dict[str, Any]:
     return {
-        "theme": "",                 # ttk theme name
+        "theme": "",                 # ttk theme name（空なら ui_mode に従って自動選択）
+        "ui_mode": "unified",        # "unified" = Win/Mac 同系の見た目（clam） / "native" = OS標準
         "price_mode": "int",         # "int" | "float"
         "price_decimals": 2,         # used when price_mode == "float"
         "danger_confirm_phrase": "DELETE",
@@ -30,46 +34,77 @@ def _default_data() -> Dict[str, Any]:
 class StoreJSON:
     def __init__(self, path: str):
         self.path = path
+        file_exists = os.path.isfile(path)
         self.data: Dict[str, Any] = load_json_or_default(path, _default_data())
-        self._normalize()
-        self._save()
+        changed = self._normalize()
+        if changed or not file_exists:
+            self._save()
 
     # -------------------------
     # Internal
     # -------------------------
-    def _normalize(self) -> None:
+    def _normalize(self) -> bool:
+        changed = False
         d = self.data
         for k, v in _default_data().items():
             if k not in d:
                 d[k] = v
+                changed = True
 
         # settings
         if "settings" not in d or not isinstance(d["settings"], dict):
             d["settings"] = _default_settings()
+            changed = True
         for k, v in _default_settings().items():
-            d["settings"].setdefault(k, v)
+            if k not in d["settings"]:
+                d["settings"][k] = v
+                changed = True
 
         # items
         for sku, it in d["items"].items():
-            it.setdefault("disabled", False)
-            it.setdefault("stock", 0)
-            it.setdefault("created_at", it.get("created_at") or now_str())
-            it.setdefault("updated_at", it.get("updated_at") or now_str())
+            if "disabled" not in it:
+                it["disabled"] = False
+                changed = True
+            if "stock" not in it:
+                it["stock"] = 0
+                changed = True
+            if not it.get("created_at"):
+                it["created_at"] = now_str()
+                changed = True
+            if not it.get("updated_at"):
+                it["updated_at"] = now_str()
+                changed = True
 
         # customers
         for cid, cu in d["customers"].items():
-            cu.setdefault("disabled", False)
-            cu.setdefault("created_at", cu.get("created_at") or now_str())
-            cu.setdefault("updated_at", cu.get("updated_at") or now_str())
+            if "disabled" not in cu:
+                cu["disabled"] = False
+                changed = True
+            if not cu.get("created_at"):
+                cu["created_at"] = now_str()
+                changed = True
+            if not cu.get("updated_at"):
+                cu["updated_at"] = now_str()
+                changed = True
 
         # history
         for r in d["inventory_history"]:
-            r.setdefault("id", new_id("IH"))
-            r.setdefault("deleted", False)
+            if "id" not in r or not r.get("id"):
+                r["id"] = new_id("IH")
+                changed = True
+            if "deleted" not in r:
+                r["deleted"] = False
+                changed = True
 
         for r in d["sales"]:
-            r.setdefault("id", new_id("S"))
-            r.setdefault("deleted", False)
+            if "id" not in r or not r.get("id"):
+                r["id"] = new_id("S")
+                changed = True
+            if "deleted" not in r:
+                r["deleted"] = False
+                changed = True
+
+        return changed
 
     def _save(self) -> None:
         atomic_write_json(self.path, self.data)
@@ -466,6 +501,117 @@ class StoreJSON:
                 continue
             total += int(r.get("line_total", 0))
         return total
+
+    # -------------------------
+    # Dashboard / display helpers（UI は data 直参照を避ける）
+    # -------------------------
+    def count_active_items(self) -> int:
+        return sum(1 for it in self.data.get("items", {}).values() if not it.get("disabled", False))
+
+    def count_active_customers(self) -> int:
+        return sum(1 for cu in self.data.get("customers", {}).values() if not cu.get("disabled", False))
+
+    def count_inventory_moves_today(self) -> int:
+        ymd = datetime.now().strftime("%Y-%m-%d")
+        n = 0
+        for r in self.data.get("inventory_history", []):
+            if r.get("deleted", False):
+                continue
+            ts = r.get("ts", "")
+            if ts.startswith(ymd):
+                n += 1
+        return n
+
+    def dashboard_snapshot(self) -> Dict[str, Any]:
+        today = datetime.now().strftime("%Y-%m-%d")
+        start_ts = f"{today} 00:00:00"
+        end_ts = f"{today} 23:59:59"
+        return {
+            "active_items": self.count_active_items(),
+            "active_customers": self.count_active_customers(),
+            "inventory_value": self.calc_inventory_total(),
+            "sales_today": self.sum_sales(start_ts=start_ts, end_ts=end_ts),
+            "moves_today": self.count_inventory_moves_today(),
+        }
+
+    def resolve_customer_name(self, cid: str) -> str:
+        cu = self.data.get("customers", {}).get(cid)
+        if not cu:
+            return "（参照なし）"
+        return str(cu.get("name", ""))
+
+    def resolve_item_name(self, sku: str) -> str:
+        it = self.data.get("items", {}).get(sku)
+        if not it:
+            return "（参照なし）"
+        return str(it.get("name", ""))
+
+    def list_master_categories(self) -> List[str]:
+        cats = set()
+        for it in self.data.get("items", {}).values():
+            c = (it.get("category") or "").strip()
+            if c:
+                cats.add(c)
+        for c in (self.data.get("category_colors") or {}).keys():
+            c = (c or "").strip()
+            if c:
+                cats.add(c)
+        return sorted(cats)
+
+    def export_inventory_history_csv(self, path: str, *, include_deleted: bool) -> int:
+        rows = self.list_inventory_history(include_deleted=include_deleted)
+        headers = [
+            "id", "日時", "操作", "SKU", "商品名", "カテゴリ", "数量", "単価", "金額",
+            "在庫総額_後", "在庫数_後", "メモ", "削除済",
+        ]
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(headers)
+            for r in rows:
+                sku = r.get("sku", "")
+                it = self.data.get("items", {}).get(sku, {})
+                w.writerow([
+                    r.get("id", ""),
+                    r.get("ts", ""),
+                    r.get("action", ""),
+                    sku,
+                    it.get("name", ""),
+                    it.get("category", ""),
+                    r.get("qty", 0),
+                    r.get("unit_price", 0),
+                    r.get("amount", 0),
+                    r.get("inventory_total_after", 0),
+                    r.get("stock_after", 0),
+                    r.get("note", ""),
+                    "はい" if r.get("deleted", False) else "",
+                ])
+        return len(rows)
+
+    def export_sales_csv(self, path: str, *, include_deleted: bool) -> int:
+        rows = self.list_sales(include_deleted=include_deleted)
+        headers = [
+            "id", "日時", "顧客ID", "顧客名", "SKU", "商品名", "数量", "単価", "行計", "メモ", "削除済",
+        ]
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(headers)
+            for r in rows:
+                cid = r.get("cid", "")
+                sku = r.get("sku", "")
+                w.writerow([
+                    r.get("id", ""),
+                    r.get("ts", ""),
+                    cid,
+                    self.resolve_customer_name(cid),
+                    sku,
+                    self.resolve_item_name(sku),
+                    r.get("qty", 0),
+                    r.get("unit_price", 0),
+                    r.get("line_total", 0),
+                    r.get("note", ""),
+                    "はい" if r.get("deleted", False) else "",
+                ])
+        return len(rows)
 
     # -------------------------
     # Category colors
