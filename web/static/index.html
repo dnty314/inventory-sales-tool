@@ -568,7 +568,7 @@
           <button type="button" class="primary" id="btn_items_print">印刷</button>
         </div>
         <div class="wrap"><table><thead><tr>
-          <th>SKU</th><th>名称</th><th>カテゴリ</th><th>単価</th><th>在庫</th><th>操作</th>
+          <th>SKU</th><th>名称</th><th>カテゴリ</th><th>単価</th><th>在庫</th><th>在庫評価額</th><th>操作</th>
         </tr></thead><tbody id="tbl_items"></tbody></table></div>
       </div>
       <datalist id="dl_cats"></datalist>
@@ -874,6 +874,7 @@
           <td>${escapeHtml(r.category)}</td>
           <td>${r.unit_price}</td>
           <td>${r.stock}</td>
+          <td>${((r.unit_price || 0) * (r.stock || 0)).toLocaleString('ja-JP')}</td>
           <td class="line-actions">
             <button type="button" class="btn-sm btn-ghost" data-edit="${escapeAttr(r.sku)}">編集</button>
             <button type="button" class="btn-sm btn-outline-warn admin-only" data-del="${escapeAttr(r.sku)}">削除</button>
