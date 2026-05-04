@@ -122,6 +122,8 @@ if not exist "%DESKTOP_DIR%" (
 )
 set SHORTCUT_PATH=%DESKTOP_DIR%\%SHORTCUT_NAME%.lnk
 set ICON_PATH=%INSTALL_DIR%\icon.ico
+rem Remove any existing shortcut first so Windows reads the new icon
+if exist "%SHORTCUT_PATH%" del /q "%SHORTCUT_PATH%" >nul 2>nul
 set VBS=%TEMP%\_mkrunshortcut_%RANDOM%.vbs
 > "%VBS%" echo Option Explicit
 >>"%VBS%" echo Dim shell, sc
@@ -141,9 +143,14 @@ if exist "%ICON_PATH%" (
 >>"%VBS%" echo sc.Save
 cscript //nologo "%VBS%" || goto :shortcut_fail
 del "%VBS%" >nul 2>nul
+rem Refresh the shell icon cache so the new icon shows immediately
+ie4uinit.exe -show >nul 2>nul
 echo.
 echo [DONE] Desktop shortcut created:
 echo        "%SHORTCUT_PATH%"
+echo.
+echo If the icon still looks old, restart Explorer:
+echo   taskkill /f /im explorer.exe ^&^& start explorer.exe
 echo.
 pause
 exit /b 0
