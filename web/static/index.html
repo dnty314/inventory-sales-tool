@@ -9,9 +9,11 @@
       try {
         document.documentElement.setAttribute('data-theme', localStorage.getItem('ist_theme') || 'light');
         document.documentElement.setAttribute('data-admin', localStorage.getItem('ist_admin') === '1' ? '1' : '0');
+        // Clear any legacy root font-size from older versions
+        document.documentElement.style.fontSize = '';
         const fs = localStorage.getItem('ist_font_scale');
-        if (fs && /^\d{2,3}$/.test(fs)) {
-          document.documentElement.style.fontSize = fs + '%';
+        if (fs && /^\d{2,3}$/.test(fs) && fs !== '100') {
+          document.documentElement.style.setProperty('--fs-scale', String(Number(fs) / 100));
         }
       } catch (e) {}
     })();
@@ -184,6 +186,7 @@
       --radius-pill: 999px;
     }
     * { box-sizing: border-box; }
+    :root { --fs-scale: 1; }
     body {
       margin: 0;
       font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -191,6 +194,7 @@
       color: var(--text);
       min-height: 100vh;
       line-height: 1.45;
+      font-size: calc(1rem * var(--fs-scale));
     }
     header {
       padding: 0.65rem 1.25rem;
@@ -205,7 +209,7 @@
     }
     header h1 {
       margin: 0;
-      font-size: 1.05rem;
+      font-size: calc(1.05rem * var(--fs-scale, 1));
       font-weight: 700;
       color: var(--text);
       letter-spacing: -0.02em;
@@ -219,7 +223,7 @@
       padding: 0.45rem 0.9rem;
       border-radius: var(--radius-pill);
       cursor: pointer;
-      font-size: 0.8125rem;
+      font-size: calc(0.8125rem * var(--fs-scale, 1));
       font-weight: 500;
       transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
     }
@@ -247,7 +251,7 @@
     }
     .card h2 {
       margin: 0 0 1rem;
-      font-size: 0.9375rem;
+      font-size: calc(0.9375rem * var(--fs-scale, 1));
       font-weight: 700;
       color: var(--text);
       padding-bottom: 0.65rem;
@@ -260,9 +264,9 @@
       border-radius: var(--radius-sm);
       border: 1px solid var(--border);
     }
-    .stat .v { font-size: 1.35rem; font-weight: 700; color: var(--primary); letter-spacing: -0.02em; }
-    .stat .l { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.35rem; font-weight: 500; }
-    label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.3rem; }
+    .stat .v { font-size: calc(1.35rem * var(--fs-scale, 1)); font-weight: 700; color: var(--primary); letter-spacing: -0.02em; }
+    .stat .l { font-size: calc(0.75rem * var(--fs-scale, 1)); color: var(--text-muted); margin-top: 0.35rem; font-weight: 500; }
+    label { display: block; font-size: calc(0.78rem * var(--fs-scale, 1)); font-weight: 600; color: var(--text-muted); margin-bottom: 0.3rem; }
     input, select, textarea {
       width: 100%;
       padding: 0.5rem 0.65rem;
@@ -271,7 +275,7 @@
       background: var(--bg-input);
       color: var(--text);
       margin-bottom: 0.55rem;
-      font-size: 0.875rem;
+      font-size: calc(0.875rem * var(--fs-scale, 1));
       transition: border-color 0.15s, box-shadow 0.15s;
     }
     input:hover, select:hover, textarea:hover { border-color: var(--border-strong); }
@@ -290,7 +294,7 @@
       cursor: pointer;
       border-radius: var(--radius-sm);
       font-weight: 600;
-      font-size: 0.875rem;
+      font-size: calc(0.875rem * var(--fs-scale, 1));
       transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
     }
     button.primary, .btn-primary {
@@ -316,7 +320,7 @@
     }
     .btn-sm {
       padding: 0.32rem 0.65rem;
-      font-size: 0.75rem;
+      font-size: calc(0.75rem * var(--fs-scale, 1));
       font-weight: 600;
       border-radius: 6px;
     }
@@ -341,18 +345,18 @@
     }
     .btn-outline-ok:hover { background: var(--success-bg); }
 
-    .err { color: var(--danger); font-size: 0.875rem; margin: 0.5rem 0; font-weight: 500; }
-    .ok { color: var(--success); font-size: 0.875rem; margin: 0.5rem 0; font-weight: 500; }
+    .err { color: var(--danger); font-size: calc(0.875rem * var(--fs-scale, 1)); margin: 0.5rem 0; font-weight: 500; }
+    .ok { color: var(--success); font-size: calc(0.875rem * var(--fs-scale, 1)); margin: 0.5rem 0; font-weight: 500; }
     .text-muted { color: var(--text-muted); font-weight: 500; }
 
-    table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+    table { width: 100%; border-collapse: collapse; font-size: calc(0.8125rem * var(--fs-scale, 1)); }
     thead th {
       text-align: left;
       padding: 0.55rem 0.65rem;
       border-bottom: 2px solid var(--border);
       color: var(--text-muted);
       font-weight: 700;
-      font-size: 0.72rem;
+      font-size: calc(0.72rem * var(--fs-scale, 1));
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
@@ -394,7 +398,7 @@
     }
     .preview-panel h3 {
       margin: 0 0 0.65rem;
-      font-size: 0.8125rem;
+      font-size: calc(0.8125rem * var(--fs-scale, 1));
       font-weight: 700;
       color: var(--text);
     }
@@ -405,11 +409,11 @@
       margin-top: 0.75rem;
       padding-top: 0.75rem;
       border-top: 1px solid var(--border);
-      font-size: 0.875rem;
+      font-size: calc(0.875rem * var(--fs-scale, 1));
       font-weight: 600;
     }
     .preview-panel .sum-row span { color: var(--text-muted); font-weight: 500; margin-right: 0.35rem; }
-    .preview-panel .err-inline { color: var(--danger); font-size: 0.8125rem; margin-top: 0.5rem; }
+    .preview-panel .err-inline { color: var(--danger); font-size: calc(0.8125rem * var(--fs-scale, 1)); margin-top: 0.5rem; }
     .mv-batch-row { margin-bottom: 0.75rem; }
     select.qty-select {
       width: 100%;
@@ -419,7 +423,7 @@
       background: var(--bg-input);
       color: var(--text);
       margin-bottom: 0.55rem;
-      font-size: 0.875rem;
+      font-size: calc(0.875rem * var(--fs-scale, 1));
     }
     .settings-field { max-width: 320px; margin-bottom: 1rem; }
     input.field-readonly {
@@ -443,7 +447,7 @@
       display: none;
       margin: 0 0 0.75rem;
       padding: 0.5rem 0;
-      font-size: 0.8125rem;
+      font-size: calc(0.8125rem * var(--fs-scale, 1));
       line-height: 1.55;
       color: var(--text-muted);
       border-bottom: 1px solid var(--border);
@@ -454,10 +458,10 @@
       background: var(--bg-stat);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      font-size: 0.875rem;
+      font-size: calc(0.875rem * var(--fs-scale, 1));
       line-height: 1.5;
     }
-    .ih-period-total strong { color: var(--text); font-size: 1.02rem; }
+    .ih-period-total strong { color: var(--text); font-size: calc(1.02rem * var(--fs-scale, 1)); }
     @media print {
       @page { margin: 12mm; }
       body.print-target-ihist,
@@ -585,7 +589,7 @@
         </div>
 
         <div id="mv_batch_wrap">
-          <p class="text-muted" style="font-size:0.8125rem;margin:0.65rem 0 0.85rem;line-height:1.5">
+          <p class="text-muted" style="font-size: calc(0.8125rem * var(--fs-scale, 1));margin:0.65rem 0 0.85rem;line-height:1.5">
             同じ入力欄で商品を選び「プレビューに追加」を繰り返します。プレビュー表の「削除」で取り消し、実行でまとめて反映します。
           </p>
           <div class="mv-batch-row">
@@ -710,7 +714,7 @@
             <option value="125">特大（125%）</option>
           </select>
         </div>
-        <p class="text-muted" style="font-size:0.8125rem;margin:0">選択内容はこのブラウザ（localStorage）に保存されます。</p>
+        <p class="text-muted" style="font-size: calc(0.8125rem * var(--fs-scale, 1));margin:0">選択内容はこのブラウザ（localStorage）に保存されます。</p>
       </div>
       <div class="card">
         <h2>管理者向け</h2>
@@ -1067,7 +1071,13 @@
 
     function applyFontScale(scale) {
       const v = FONT_SCALES.includes(String(scale)) ? String(scale) : '100';
-      document.documentElement.style.fontSize = v === '100' ? '' : v + '%';
+      // Clear any legacy root font-size override
+      document.documentElement.style.fontSize = '';
+      if (v === '100') {
+        document.documentElement.style.removeProperty('--fs-scale');
+      } else {
+        document.documentElement.style.setProperty('--fs-scale', String(Number(v) / 100));
+      }
       try { localStorage.setItem('ist_font_scale', v); } catch (e) {}
       syncFontScaleSelect();
     }
