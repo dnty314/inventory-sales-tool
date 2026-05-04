@@ -121,6 +121,7 @@ if not exist "%DESKTOP_DIR%" (
   exit /b 1
 )
 set SHORTCUT_PATH=%DESKTOP_DIR%\%SHORTCUT_NAME%.lnk
+set ICON_PATH=%INSTALL_DIR%\icon.ico
 set VBS=%TEMP%\_mkrunshortcut_%RANDOM%.vbs
 > "%VBS%" echo Option Explicit
 >>"%VBS%" echo Dim shell, sc
@@ -134,6 +135,9 @@ set VBS=%TEMP%\_mkrunshortcut_%RANDOM%.vbs
 >>"%VBS%" echo sc.Arguments = "webopen"
 >>"%VBS%" echo sc.WorkingDirectory = workDir
 >>"%VBS%" echo sc.Description = "Start web UI and open browser"
+if exist "%ICON_PATH%" (
+  >>"%VBS%" echo sc.IconLocation = "%ICON_PATH%"
+)
 >>"%VBS%" echo sc.Save
 cscript //nologo "%VBS%" || goto :shortcut_fail
 del "%VBS%" >nul 2>nul
