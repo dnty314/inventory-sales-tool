@@ -1,39 +1,22 @@
-"""アプリアイコン生成: グラデーション背景＋白い箱＋アンバーの上昇バー"""
-import numpy as np
+"""アプリアイコン生成: マット背景＋白い箱＋アンバーの上昇バー"""
 from PIL import Image, ImageDraw, ImageFilter
 
 S = 1024  # 高解像度で描き、最後に各サイズへリサンプル
 margin = int(S * 0.04)
 radius = int(S * 0.20)
 
-# === 背景: 対角グラデーション（インディゴ → バイオレット） ===
-yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
-t = ((xx + yy) / (2 * (S - 1)))[..., None]
-c1 = np.array([55, 48, 163], dtype=np.float32)    # #3730a3 deep indigo
-c2 = np.array([124, 58, 237], dtype=np.float32)   # #7c3aed violet
-color = c1 * (1 - t) + c2 * t
-grad = np.empty((S, S, 4), dtype=np.uint8)
-grad[..., :3] = color.astype(np.uint8)
-grad[..., 3] = 255
-img = Image.fromarray(grad, "RGBA")
+# === 背景: マットなフラット単色（深いインディゴ） ===
+bg = (63, 58, 140, 255)  # #3f3a8c — 落ち着いたマットなインディゴ
+img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+ImageDraw.Draw(img).rounded_rectangle(
+    [margin, margin, S - margin, S - margin], radius=radius, fill=bg
+)
 
-# 角丸マスク
+# 後段で使う角丸マスク（ドロップシャドウのクリップ用）
 mask = Image.new("L", (S, S), 0)
 ImageDraw.Draw(mask).rounded_rectangle(
     [margin, margin, S - margin, S - margin], radius=radius, fill=255
 )
-img.putalpha(mask)
-
-# === 左上の柔らかい光（shine） ===
-shine = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-ImageDraw.Draw(shine).ellipse(
-    [int(-S * 0.30), int(-S * 0.30), int(S * 0.70), int(S * 0.55)],
-    fill=(255, 255, 255, 70),
-)
-shine = shine.filter(ImageFilter.GaussianBlur(radius=int(S * 0.06)))
-shine_masked = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-shine_masked.paste(shine, (0, 0), mask)
-img = Image.alpha_composite(img, shine_masked)
 
 # === 箱の位置 ===
 box_l = int(S * 0.20)
