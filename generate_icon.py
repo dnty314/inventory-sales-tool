@@ -1,57 +1,106 @@
-"""アプリアイコン生成: 在庫ボックス＋上昇バーをモチーフに icon.ico を作成"""
-from PIL import Image, ImageDraw
+"""アプリアイコン生成: グラデーション背景＋白い箱＋アンバーの上昇バー"""
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter
 
-S = 512  # 高解像度で描き、最後に各サイズへリサンプル
-
-img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-d = ImageDraw.Draw(img)
-
-# 背景: インディゴの角丸四角（アプリのプライマリ色 #4338ca）
-bg = (67, 56, 202, 255)
+S = 1024  # 高解像度で描き、最後に各サイズへリサンプル
 margin = int(S * 0.04)
-radius = int(S * 0.18)
-d.rounded_rectangle([margin, margin, S - margin, S - margin], radius=radius, fill=bg)
+radius = int(S * 0.20)
 
-# 上に乗せるバー（売上/推移）
+# === 背景: 対角グラデーション（インディゴ → バイオレット） ===
+yy, xx = np.mgrid[0:S, 0:S].astype(np.float32)
+t = ((xx + yy) / (2 * (S - 1)))[..., None]
+c1 = np.array([55, 48, 163], dtype=np.float32)    # #3730a3 deep indigo
+c2 = np.array([124, 58, 237], dtype=np.float32)   # #7c3aed violet
+color = c1 * (1 - t) + c2 * t
+grad = np.empty((S, S, 4), dtype=np.uint8)
+grad[..., :3] = color.astype(np.uint8)
+grad[..., 3] = 255
+img = Image.fromarray(grad, "RGBA")
+
+# 角丸マスク
+mask = Image.new("L", (S, S), 0)
+ImageDraw.Draw(mask).rounded_rectangle(
+    [margin, margin, S - margin, S - margin], radius=radius, fill=255
+)
+img.putalpha(mask)
+
+# === 左上の柔らかい光（shine） ===
+shine = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+ImageDraw.Draw(shine).ellipse(
+    [int(-S * 0.30), int(-S * 0.30), int(S * 0.70), int(S * 0.55)],
+    fill=(255, 255, 255, 70),
+)
+shine = shine.filter(ImageFilter.GaussianBlur(radius=int(S * 0.06)))
+shine_masked = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+shine_masked.paste(shine, (0, 0), mask)
+img = Image.alpha_composite(img, shine_masked)
+
+# === 箱の位置 ===
+box_l = int(S * 0.20)
+box_r = int(S * 0.80)
+box_t = int(S * 0.46)
+box_b = int(S * 0.82)
+box_radius = int(S * 0.05)
+
+# ドロップシャドウ（背景の角丸内に収まるよう mask でクリップ）
+sh = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+ImageDraw.Draw(sh).rounded_rectangle(
+    [box_l, box_t + int(S * 0.015), box_r, box_b + int(S * 0.015)],
+    radius=box_radius, fill=(0, 0, 0, 110),
+)
+sh = sh.filter(ImageFilter.GaussianBlur(radius=int(S * 0.025)))
+sh_masked = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+sh_masked.paste(sh, (0, 0), mask)
+img = Image.alpha_composite(img, sh_masked)
+
+# === 箱本体（白の角丸） ===
+box_layer = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+ImageDraw.Draw(box_layer).rounded_rectangle(
+    [box_l, box_t, box_r, box_b], radius=box_radius, fill=(255, 255, 255, 250)
+)
+img = Image.alpha_composite(img, box_layer)
+
+# 箱の蓋ライン＋取っ手（インディゴでアクセント）
+acc = (67, 56, 202, 230)  # #4338ca indigo
+lid_y = int(box_t + (box_b - box_t) * 0.27)
+lid = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+ld = ImageDraw.Draw(lid)
+ld.line(
+    [(box_l + box_radius, lid_y), (box_r - box_radius, lid_y)],
+    fill=acc, width=int(S * 0.012),
+)
+# 蓋の上の小さな取っ手
+hw = int(S * 0.13)
+hh = int(S * 0.028)
+hx1 = (S - hw) // 2
+hx2 = hx1 + hw
+hy1 = lid_y - hh - int(S * 0.018)
+hy2 = hy1 + hh
+ld.rounded_rectangle([hx1, hy1, hx2, hy2], radius=hh // 2, fill=acc)
+img = Image.alpha_composite(img, lid)
+
+# === 上昇バー（アンバーで補色アクセント） ===
+amber = (251, 191, 36, 255)  # #fbbf24
 bar_count = 3
-bar_w = int(S * 0.07)
-gap = int(S * 0.04)
+bar_w = int(S * 0.075)
+gap = int(S * 0.038)
 total_w = bar_count * bar_w + (bar_count - 1) * gap
 bars_left = (S - total_w) // 2
-bar_top_pad = int(S * 0.035)  # 箱からの離間
-heights = [int(S * 0.11), int(S * 0.18), int(S * 0.25)]
-white = (255, 255, 255, 255)
-
-# 在庫ボックス（白アウトライン＋蓋ライン）
-box_l = int(S * 0.22)
-box_r = int(S * 0.78)
-box_t = int(S * 0.46)
-box_b = int(S * 0.80)
-lw = int(S * 0.035)
-d.rounded_rectangle([box_l, box_t, box_r, box_b], radius=int(S * 0.05), outline=white, width=lw)
-lid_y = int(S * 0.55)
-d.line([(box_l + lw // 2, lid_y), (box_r - lw // 2, lid_y)], fill=white, width=lw)
-
-# 蓋の中央に小さな取っ手線
-handle_w = int(S * 0.10)
-hx1 = (S - handle_w) // 2
-hx2 = hx1 + handle_w
-hy = (box_t + lid_y) // 2
-d.line([(hx1, hy), (hx2, hy)], fill=white, width=int(S * 0.025))
-
-# 上昇バー（角丸の縦バー）
+heights = [int(S * 0.10), int(S * 0.17), int(S * 0.24)]
+bars = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+bd = ImageDraw.Draw(bars)
 for i in range(bar_count):
     x = bars_left + i * (bar_w + gap)
-    h = heights[i]
-    y_bot = box_t - bar_top_pad
-    y_top = y_bot - h
-    d.rounded_rectangle([x, y_top, x + bar_w, y_bot], radius=bar_w // 2, fill=white)
+    y_bot = box_t - int(S * 0.025)
+    y_top = y_bot - heights[i]
+    bd.rounded_rectangle(
+        [x, y_top, x + bar_w, y_bot], radius=bar_w // 2, fill=amber
+    )
+img = Image.alpha_composite(img, bars)
 
-# ICO は複数サイズをひとつのファイルに埋め込む
+# === 出力 ===
 sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
 img.save("icon.ico", format="ICO", sizes=sizes)
-
-# 確認用に PNG も書き出し
 img.save("icon_preview.png", format="PNG")
 print("Wrote icon.ico (sizes:", sizes, ")")
 print("Wrote icon_preview.png")
