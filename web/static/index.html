@@ -9,6 +9,10 @@
       try {
         document.documentElement.setAttribute('data-theme', localStorage.getItem('ist_theme') || 'light');
         document.documentElement.setAttribute('data-admin', localStorage.getItem('ist_admin') === '1' ? '1' : '0');
+        const fs = localStorage.getItem('ist_font_scale');
+        if (fs && /^\d{2,3}$/.test(fs)) {
+          document.documentElement.style.fontSize = fs + '%';
+        }
       } catch (e) {}
     })();
   </script>
@@ -697,6 +701,15 @@
             <option value="midnight">ミッドナイト（紫・ダーク）</option>
           </select>
         </div>
+        <div class="settings-field">
+          <label for="font_scale_select">フォントサイズ</label>
+          <select id="font_scale_select">
+            <option value="90">小（90%）</option>
+            <option value="100">標準（100%）</option>
+            <option value="110">大（110%）</option>
+            <option value="125">特大（125%）</option>
+          </select>
+        </div>
         <p class="text-muted" style="font-size:0.8125rem;margin:0">選択内容はこのブラウザ（localStorage）に保存されます。</p>
       </div>
       <div class="card">
@@ -779,6 +792,7 @@
       if (id === 'cust') loadCustPage();
       if (id === 'settings') {
         syncThemeSelect();
+        syncFontScaleSelect();
         syncAdminFromStorage();
       }
     }
@@ -1039,6 +1053,29 @@
       try { localStorage.setItem('ist_theme', name); } catch (e) {}
       syncThemeSelect();
       refreshChartTheme();
+    }
+
+    const FONT_SCALES = ['90', '100', '110', '125'];
+
+    function getFontScale() {
+      try {
+        const v = localStorage.getItem('ist_font_scale');
+        if (v && FONT_SCALES.includes(v)) return v;
+      } catch (e) {}
+      return '100';
+    }
+
+    function applyFontScale(scale) {
+      const v = FONT_SCALES.includes(String(scale)) ? String(scale) : '100';
+      document.documentElement.style.fontSize = v === '100' ? '' : v + '%';
+      try { localStorage.setItem('ist_font_scale', v); } catch (e) {}
+      syncFontScaleSelect();
+    }
+
+    function syncFontScaleSelect() {
+      const sel = document.getElementById('font_scale_select');
+      if (!sel) return;
+      sel.value = getFontScale();
     }
 
     function getChartThemeColors() {
@@ -1322,6 +1359,10 @@
       applyTheme(e.target.value);
     });
 
+    document.getElementById('font_scale_select').addEventListener('change', (e) => {
+      applyFontScale(e.target.value);
+    });
+
     document.getElementById('admin_mode').addEventListener('change', updateAdminDom);
     document.getElementById('admin_force_delete').addEventListener('change', () => {
       try {
@@ -1595,6 +1636,7 @@
     });
 
     syncThemeSelect();
+    syncFontScaleSelect();
     syncAdminFromStorage();
     setTab('dash');
   </script>
